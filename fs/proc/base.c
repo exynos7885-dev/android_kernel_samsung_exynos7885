@@ -89,7 +89,6 @@
 #include <linux/posix-timers.h>
 #include <linux/cpufreq_times.h>
 #include <linux/task_integrity.h>
-#include <linux/proca.h>
 #ifdef CONFIG_HARDWALL
 #include <asm/hardwall.h>
 #endif
