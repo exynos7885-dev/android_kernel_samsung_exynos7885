@@ -211,10 +211,6 @@ obj-$(CONFIG_SENSORS_FINGERPRINT)       += fingerprint/
 # UH
 obj-$(CONFIG_UH) 		+= uh/
 
-# FIVE TEE driver
-obj-$(CONFIG_FIVE_TEE_DRIVER)	+= five/
-obj-$(CONFIG_ICD)		+= security/samsung/icdrv/
-
 # streamline
 ifeq ($(CONFIG_GATOR), y)
 	obj-$(CONFIG_GATOR)				+= gator/

@@ -108,11 +108,7 @@ static struct GAForensicINFO {
 #else
 	.is_kdp_ns_on = false,
 #endif
-#ifdef CONFIG_FIVE
-	.task_struct_integrity = offsetof(struct task_struct, integrity),
-#else
 	.task_struct_integrity = 0xECEF,
-#endif
 #if defined(CONFIG_FIVE_PA_FEATURE) || defined(CONFIG_PROCA)
 	.file_struct_f_signature = offsetof(struct file, f_signature),
 #endif

@@ -211,8 +211,6 @@ fw-shipped-$(CONFIG_SENSORS_SSP_STM32) += ssp_crashed.fw
 
 fw-shipped-$(CONFIG_KEYBOARD_ABOV_TOUCH_3X6) += abov/a96t326_a5y18.fw abov/a96t326_a5y18_can.fw abov/a96t326_a7y18.fw
 
-fw-shipped-$(CONFIG_FIVE_TEE_DRIVER) += five/ffffffff000000000000000000000072.tlbin
-
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 
 quiet_cmd_ihex  = IHEX    $@
