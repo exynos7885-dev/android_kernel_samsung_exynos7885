@@ -159,6 +159,7 @@ struct gadget_info {
 	struct list_head linked_func;
 	char *prev_func_list;
 	bool	gsi_boot;
+	bool symboliclink_change_mode;
 #endif
 };
 
@@ -375,6 +376,27 @@ static int unregister_gadget(struct gadget_info *gi)
 	return 0;
 }
 
+static void clear_current_usb_link(struct usb_composite_dev *cdev)
+{
+	struct usb_configuration *c;
+	struct config_usb_cfg *cfg;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
+	struct usb_function *f, *tmp;
+
+	pr_info("usb: %s: GSI_image : Clear cfg->func_list\n", __func__);
+	if (cdev != NULL) {
+		list_for_each_entry(c, &cdev->configs, list) {
+			cfg = container_of(c, struct config_usb_cfg, c);
+			list_for_each_entry_safe(f, tmp, &cfg->func_list, list) {
+				pr_info("usb: %s : f->name = %s\n", __func__, f->name);
+				list_move_tail(&f->list, &gi->linked_func);
+			}
+			c->next_interface_id = 0;
+			memset(c->interface, 0, sizeof(c->interface));
+		}
+	}
+}
+
 static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 		const char *page, size_t len)
 {
@@ -397,6 +419,12 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 	name = kstrdup(page, GFP_KERNEL);
 	if (!name)
 		return -ENOMEM;
+
+	if(!len || (strlen(name) != len)) {
+		kfree(name);
+		return -EINVAL;
+	}
+
 	if (name[len - 1] == '\n')
 		name[len - 1] = '\0';
 
@@ -431,6 +459,7 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 			}
 		}
 #endif
+
 	} else {
 		if (gi->udc_name) {
 			ret = -EBUSY;
@@ -526,6 +555,59 @@ static void gadget_config_attr_release(struct config_item *item)
 	kfree(cfg);
 }
 
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
+static bool is_symboliclink_change_mode(struct config_usb_cfg *cfg)
+{
+	struct gadget_config_name *cn;
+
+	if (!list_empty(&cfg->string_list)) {
+		list_for_each_entry(cn, &cfg->string_list, list) {
+			if (strcmp(cn->configuration, "Conf 1") != 0)
+				return true;
+		}
+	}
+	return false;
+}
+
+static struct usb_function *get_adb_function_from_linked_func(struct gadget_info *gi)
+{
+	struct usb_function *f, *tmp;
+
+	list_for_each_entry_safe(f, tmp, &gi->linked_func, list) {
+		pr_info("usb: %s : f_name = %s\n", __func__, f->name);
+		if (strcmp(f->name, "adb") == 0)
+			return f;
+	}
+	return NULL;
+}
+static int make_adb_connection_for_gsi(
+	struct config_usb_cfg *cfg,
+	struct usb_function_instance *fi)
+{
+	struct usb_composite_dev *cdev = cfg->c.cdev;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
+	struct usb_function *f;
+	int ret = 0;
+
+	if (!list_empty(&gi->linked_func) || !list_empty(&cfg->func_list))
+		clear_current_usb_link(cdev);
+
+	pr_info("usb: %s: ADB Only mode for recovery or VTS test\n", __func__);
+	f = usb_get_function(fi);
+
+	if (IS_ERR(f)) {
+		ret = PTR_ERR(f);
+	} else {
+		f = get_adb_function_from_linked_func(gi);
+		if (f)
+			list_move_tail(&f->list, &cfg->func_list);
+		else
+			ret = -EEXIST;
+	}
+	return ret;
+}
+#endif
+
 static int config_usb_cfg_link(
 	struct config_item *usb_cfg_ci,
 	struct config_item *usb_func_ci)
@@ -569,6 +651,26 @@ static int config_usb_cfg_link(
 
 	list_for_each_entry(f, &cfg->func_list, list) {
 		if (f->fi == fi) {
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
+			pr_info("usb: %s : usb function instance already exist (GSI)~\n", __func__);
+			gi->symboliclink_change_mode = 1;
+			if (list_empty(&gi->linked_func)) {
+				pr_info("usb: %s : usb function instance already exist (GSI)add cfg\n",
+					__func__);
+				f = usb_get_function(fi);
+				if (IS_ERR(f))
+					ret = PTR_ERR(f);
+				else {
+					list_add_tail(&f->list, &cfg->func_list);
+					ret = 0;
+				}
+				goto out;
+			} else {
+				ret = make_adb_connection_for_gsi(cfg, fi);
+				cfg->c.next_interface_id = 0;
+				goto out;
+			}
+#endif
 			ret = -EEXIST;
 			goto out;
 		}
@@ -595,6 +697,33 @@ static int config_usb_cfg_link(
 			fi->set_inst_eth_addr(fi, ethaddr);
 		}
 	}
+#endif
+
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
+	/* Go through all configs, attach all functions */
+	if (is_symboliclink_change_mode(cfg)) {
+		gi->symboliclink_change_mode = 1;
+		if (list_empty(&gi->linked_func)) {
+			pr_info("usb: %s : add cfg func_list~\n", __func__);
+			f = usb_get_function(fi);
+			if (IS_ERR(f))
+				ret = PTR_ERR(f);
+			else {
+				list_add_tail(&f->list, &cfg->func_list);
+				ret = 0;
+			}
+
+			goto out;
+
+		} else {
+			ret = make_adb_connection_for_gsi(cfg, fi);
+			if (ret)
+				pr_err("usb: %s adb function setting fails %d\n", __func__, ret);
+			cfg->c.next_interface_id = 0;
+			goto out;
+		}
+	} else
+		gi->symboliclink_change_mode = 0;
 #endif
 
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
@@ -2004,7 +2133,6 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 	struct usb_gadget *gadget;
 	struct usb_configuration *c;
 	struct config_usb_cfg *cfg;
-	struct usb_function *f, *tmp;
 	char *dwc_name = "10c00000.dwc3";
 	char *name;
 	int ret, len;
@@ -2084,14 +2212,7 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 		store_usblog_notify(NOTIFY_USBMODE_EXTRA, "enable 0", NULL);
 #endif
 		unregister_gadget(dev);
-		list_for_each_entry(c, &cdev->configs, list) {
-			cfg = container_of(c, struct config_usb_cfg, c);
-			list_for_each_entry_safe(f, tmp, &cfg->func_list, list) {
-				list_move_tail(&f->list, &dev->linked_func);
-			}
-			c->next_interface_id = 0;
-			memset(c->interface, 0, sizeof(c->interface));
-		}
+		clear_current_usb_link(cdev);
 		dev->enabled = false;
 	} else {
 #ifdef CONFIG_USB_NOTIFY_PROC_LOG
