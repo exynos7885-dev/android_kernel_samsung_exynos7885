@@ -15,6 +15,13 @@ config PRINTK_TIME
 	  The behavior is also controlled by the kernel command line
 	  parameter printk.time=1. See Documentation/kernel-parameters.txt
 
+config PRINTK_PROCESS
+	bool "Show process information on printks"
+	depends on PRINTK
+	help
+	  Selecting this option causes process to be
+	  included in printk output. Or add printk.process=1 at boot-time.
+
 config MESSAGE_LOGLEVEL_DEFAULT
 	int "Default message log level (1-7)"
 	range 1 7
@@ -1888,6 +1895,16 @@ config TEST_STATIC_KEYS
 	depends on m
 	help
 	  Test the static key interfaces.
+
+	  If unsure, say N.
+
+config BUG_ON_DATA_CORRUPTION
+	bool "Trigger a BUG when data corruption is detected"
+	select CONFIG_DEBUG_LIST
+	help
+	  Select this option if the kernel should BUG when it encounters
+	  data corruption in kernel memory structures when they get checked
+	  for validity.
 
 	  If unsure, say N.
 
