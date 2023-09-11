@@ -158,7 +158,6 @@ struct gadget_info {
 	struct device *dev;
 	struct list_head linked_func;
 	char *prev_func_list;
-	bool	gsi_boot;
 	bool symboliclink_change_mode;
 #endif
 };
@@ -405,9 +404,6 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 	int ret;
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
 	struct usb_composite_dev *cdev;
-	struct usb_configuration *c;
-	struct config_usb_cfg *cfg;
-	struct usb_function *f, *tmp;
 #endif
 
 	/* HACK: ffs_ep0_write must be called before UDC store in adb,
@@ -445,18 +441,9 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 		/* prevent memory leak */
 		kfree(name);
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
-		if (gi->gsi_boot) {
-			printk("usb: %s: GSI_image : Clear cfg->func_list \n",__func__);
-			if ( cdev != NULL ) {
-				list_for_each_entry(c, &cdev->configs, list) {
-					cfg = container_of(c, struct config_usb_cfg, c);
-					list_for_each_entry_safe(f, tmp, &cfg->func_list, list) {
-						list_move_tail(&f->list, &gi->linked_func);
-					}
-					c->next_interface_id = 0;
-				//	memset(c->interface, 0, sizeof(c->interface));
-				}
-			}
+		if (!list_empty(&gi->linked_func) && gi->symboliclink_change_mode) {
+			pr_info("usb: %s: GSI_image : Clear cfg->func_list\n", __func__);
+			clear_current_usb_link(cdev);
 		}
 #endif
 
@@ -469,12 +456,11 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 		if (ret)
 			goto err;
 		gi->udc_name = name;
-#ifdef CONFIG_USB_CONFIGFS_UEVENT
-		if (gi->gsi_boot) {
-			printk("usb: %s : gi->gsi_boot = %d \n",__func__,gi->gsi_boot);
+		if (gi->symboliclink_change_mode) {
+			pr_info("usb: %s : gi->symboliclink_change_mode = %d\n", __func__,
+				gi->symboliclink_change_mode);
 			usb_gadget_connect(gi->cdev.gadget);
 		}
-#endif
 	}
 	mutex_unlock(&gi->lock);
 	pr_info("%s: ---\n", __func__);
@@ -628,10 +614,6 @@ static int config_usb_cfg_link(
 	struct gadget_strings *gs;
 #endif
 
-#ifdef CONFIG_USB_CONFIGFS_UEVENT
-	struct usb_configuration	*c;
-	struct usb_function *tmp;
-#endif
 	int ret;
 
 	mutex_lock(&gi->lock);
@@ -726,36 +708,6 @@ static int config_usb_cfg_link(
 		gi->symboliclink_change_mode = 0;
 #endif
 
-#ifdef CONFIG_USB_CONFIGFS_UEVENT
-	/* Go through all configs, attach all functions */
-	list_for_each_entry(c, &gi->cdev.configs, list) {
-		struct config_usb_cfg *cfg;
-		struct gadget_config_name *cn;
-
-		cfg = container_of(c, struct config_usb_cfg, c);
-		if (!list_empty(&cfg->string_list)) {
-			i = 0;
-			list_for_each_entry(cn, &cfg->string_list, list) {
-				i++;
-				if (strcmp(cn->configuration, "Conf 1")!= 0) {			
-					if (strcmp(cn->configuration, "adb") == 0) {				
-						list_for_each_entry_safe(f, tmp, &gi->linked_func, list) {
-							if (strcmp(f->name , "adb") == 0) {
-								printk("usb: %s: GSI adb works(%s)\n",__func__, f->name);
-								list_move_tail(&f->list, &cfg->func_list);
-							}
-						}
-					}
-					gi->gsi_boot=1;
-					ret = 0;
-					goto out;
-				} else {
-					gi->gsi_boot=0;
-				}
-			}
-		}
-	}
-#endif
 	f = usb_get_function(fi);
 	if (f == NULL) {
 		/* Are we trying to symlink PTP without MTP function? */
@@ -805,17 +757,8 @@ static int config_usb_cfg_unlink(
 
 	list_for_each_entry(f, &cfg->func_list, list) {
 		if (f->fi == fi) {
-#ifdef CONFIG_USB_CONFIGFS_UEVENT
-			if (gi->gsi_boot)
-				list_move_tail(&f->list, &gi->linked_func);
-			else {
-				list_del(&f->list);
-				usb_put_function(f);
-			}
-#else
 			list_del(&f->list);
 			usb_put_function(f);
-#endif
 			mutex_unlock(&gi->lock);
 			return 0;
 		}
